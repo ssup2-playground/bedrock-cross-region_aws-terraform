@@ -136,7 +136,8 @@ resource "aws_vpc_peering_connection_accepter" "seoul_virginia" {
 resource "aws_route" "vpc_seoul_to_virginia" {
   provider = aws.seoul
 
-  route_table_id            = module.vpc_seoul.private_route_table_ids[0]
+  for_each                  = toset(module.vpc_seoul.private_route_table_ids)
+  route_table_id            = each.value
   destination_cidr_block    = local.vpc_cidr_virginia
   vpc_peering_connection_id = aws_vpc_peering_connection.seoul_virginia.id
 }
@@ -144,7 +145,8 @@ resource "aws_route" "vpc_seoul_to_virginia" {
 resource "aws_route" "vpc_virginia_to_vpc_seoul" {
   provider = aws.virginia
 
-  route_table_id            = module.vpc_virginia.private_route_table_ids[0]
+  for_each                  = toset(module.vpc_virginia.private_route_table_ids)
+  route_table_id            = each.value
   destination_cidr_block    = local.vpc_cidr_seoul
   vpc_peering_connection_id = aws_vpc_peering_connection.seoul_virginia.id
 }
@@ -162,6 +164,24 @@ resource "aws_vpc_peering_connection_accepter" "seoul_oregon" {
 
   vpc_peering_connection_id = aws_vpc_peering_connection.seoul_oregon.id
   auto_accept               = true
+}
+
+resource "aws_route" "vpc_seoul_to_oregon" {
+  provider = aws.seoul
+
+  for_each                  = toset(module.vpc_seoul.private_route_table_ids)
+  route_table_id            = each.value
+  destination_cidr_block    = local.vpc_cidr_oregon
+  vpc_peering_connection_id = aws_vpc_peering_connection.seoul_oregon.id
+}
+
+resource "aws_route" "vpc_oregon_to_vpc_seoul" {
+  provider = aws.oregon
+
+  for_each                  = toset(module.vpc_oregon.private_route_table_ids)
+  route_table_id            = each.value
+  destination_cidr_block    = local.vpc_cidr_seoul
+  vpc_peering_connection_id = aws_vpc_peering_connection.seoul_oregon.id
 }
 
 ## Endpoint
@@ -197,6 +217,50 @@ resource "aws_vpc_endpoint" "virginia_bedrock" {
   subnet_ids = module.vpc_virginia.private_subnets
 }
 
+resource "aws_vpc_endpoint_policy" "virginia_bedrock_invoke" {
+  provider = aws.virginia
+
+  vpc_endpoint_id = aws_vpc_endpoint.virginia_bedrock.id
+
+  policy = jsonencode({
+    "Version" : "2012-10-17",
+    "Statement" : [
+      {
+        "Sid" : "AllowAll",
+        "Effect" : "Allow",
+        "Principal" : {
+          "AWS" : "*"
+        },
+        "Action" : [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream"
+        ],
+        "Resource" : "*"
+      }
+    ]
+  })
+}
+
+module "sg_oregon_bedrock_vpc_endpoint" {
+  source = "terraform-aws-modules/security-group/aws"
+  providers = {
+    aws = aws.oregon
+  }
+
+  name   = format("%s-bedrock-vpc-endpoint-sg", local.name)
+  vpc_id = module.vpc_oregon.vpc_id
+
+  ingress_with_cidr_blocks = [
+    {
+      from_port   = 443
+      to_port     = 443
+      protocol    = "tcp"
+      description = "https"
+      cidr_blocks = "0.0.0.0/0"
+    }
+  ]
+}
+
 resource "aws_vpc_endpoint" "oregon_bedrock" {
   provider = aws.oregon
 
@@ -204,7 +268,33 @@ resource "aws_vpc_endpoint" "oregon_bedrock" {
   service_name        = "com.amazonaws.us-west-2.bedrock-runtime"
   vpc_endpoint_type   = "Interface"
 
+  security_group_ids = [module.sg_oregon_bedrock_vpc_endpoint.security_group_id]
+
   subnet_ids = module.vpc_oregon.private_subnets
+}
+
+resource "aws_vpc_endpoint_policy" "oregon_bedrock_invoke" {
+  provider = aws.oregon
+
+  vpc_endpoint_id = aws_vpc_endpoint.oregon_bedrock.id
+
+  policy = jsonencode({
+    "Version" : "2012-10-17",
+    "Statement" : [
+      {
+        "Sid" : "AllowAll",
+        "Effect" : "Allow",
+        "Principal" : {
+          "AWS" : "*"
+        },
+        "Action" : [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream"
+        ],
+        "Resource" : "*"
+      }
+    ]
+  })
 }
 
 ## EC2
